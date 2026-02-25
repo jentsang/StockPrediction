@@ -45,7 +45,7 @@ class DataFetcher:
             logger.info(f"Loading cached data for {symbol} from {cache_path}")
             return pd.read_parquet(cache_path)
 
-        logger.info(f"Fetching {symbol} [{self.timeframe}] {start} → {end} via {self.source}")
+        logger.info(f"Fetching {symbol} [{self.timeframe}] {start} -> {end} via {self.source}")
 
         if self.source == "alpaca":
             df = self._fetch_alpaca(symbol, start, end)

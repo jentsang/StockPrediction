@@ -13,7 +13,7 @@ symbols:
 # ── Data Settings ─────────────────────────────────────────────
 data:
   source: alpaca                  # alpaca | yfinance | polygon
-  timeframe: 1Min                 # 1Min | 5Min | 15Min | 1Hour | 1Day
+  timeframe: 1Day                 # 1Min | 5Min | 15Min | 1Hour | 1Day
   start_date: "2020-01-01"
   end_date: "2024-12-31"
   train_split: 0.70               # 70% train

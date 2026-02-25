@@ -86,7 +86,7 @@ class DataProcessor:
         except ImportError:
             raise ImportError("ta not installed. Run: pip install ta")
 
-        fc = self.feat_cfg
+        fc = self.feat_cfg["technical_indicators"]
 
         # RSI
         df["rsi"] = ta.momentum.RSIIndicator(

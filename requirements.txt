@@ -11,6 +11,7 @@ scipy>=1.12.0
 alpaca-py>=0.20.0             # Alpaca Markets SDK (data + trading)
 yfinance>=0.2.36              # Yahoo Finance fallback for daily data
 requests>=2.31.0
+pyarrow>=15.0.0               # Parquet read/write support for data caching
 
 # ── Machine Learning ──────────────────────────────────────────────────────────
 torch>=2.2.0                  # PyTorch - LSTM / Transformer models
