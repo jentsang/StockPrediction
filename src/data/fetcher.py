@@ -1,9 +1,13 @@
 """
-Data fetcher — pulls historical OHLCV bars from Alpaca or yFinance.
+Data fetcher — pulls historical OHLCV bars from Alpaca or yFinance,
+plus an ExternalDataFetcher for market-wide macro/cross-asset features.
 
 Usage:
     fetcher = DataFetcher(config)
     df = fetcher.fetch("AAPL", start="2022-01-01", end="2024-01-01")
+
+    ext = ExternalDataFetcher(config)
+    ext_df = ext.fetch(start="2022-01-01", end="2024-01-01")
 """
 
 import os
@@ -127,3 +131,89 @@ class DataFetcher:
         df.index.name = "datetime"
         df.columns = [c.lower() for c in df.columns]
         return df[["open", "high", "low", "close", "volume"]]
+
+
+class ExternalDataFetcher:
+    """
+    Downloads and caches market-wide macro/cross-asset features.
+
+    Fetched series
+    --------------
+    vix_close    : CBOE Volatility Index daily close
+    yield_10y    : US 10-year Treasury yield (^TNX)
+    yield_3m     : US 13-week T-bill yield (^IRX)  — short-rate proxy
+    dxy_close    : US Dollar Index close (DX-Y.NYB)
+    spy_close    : SPY ETF close — broad market benchmark
+    xlk_close    : XLK (Tech sector ETF) close — sector benchmark
+
+    Derived features (computed in DataProcessor)
+    --------------------------------------------
+    vix_change, yield_spread, dxy_change, spy_rs, xlk_rs
+    """
+
+    # ticker_name -> yfinance symbol
+    _TICKERS: dict[str, str] = {
+        "vix":      "^VIX",
+        "yield_10y": "^TNX",
+        "yield_3m":  "^IRX",
+        "dxy":      "DX-Y.NYB",
+        "spy":      "SPY",
+        "xlk":      "XLK",
+    }
+
+    def __init__(self, config: dict):
+        self.config = config
+        RAW_DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+    def fetch(
+        self,
+        start: str = None,
+        end: str = None,
+        use_cache: bool = True,
+    ) -> pd.DataFrame:
+        """Return a date-aligned DataFrame of external market features."""
+        start = start or self.config["data"]["start_date"]
+        end   = end   or self.config["data"]["end_date"]
+
+        cache_path = RAW_DATA_DIR / f"external_{start}_{end}.parquet"
+        if use_cache and cache_path.exists():
+            logger.info(f"Loading cached external data from {cache_path}")
+            return pd.read_parquet(cache_path)
+
+        try:
+            import yfinance as yf
+        except ImportError:
+            raise ImportError("yfinance not installed. Run: pip install yfinance")
+
+        logger.info(f"Fetching external market data {start} -> {end}")
+
+        series: list[pd.Series] = []
+        for name, ticker in self._TICKERS.items():
+            try:
+                raw = yf.Ticker(ticker).history(start=start, end=end, interval="1d")
+                if raw.empty:
+                    logger.warning(f"  {ticker}: returned empty DataFrame — skipping")
+                    continue
+                idx = pd.to_datetime(raw.index)
+                # tz_convert handles tz-aware; tz-naive indexes need no conversion
+                raw.index = idx.tz_convert(None) if idx.tz is not None else idx
+                raw.index = raw.index.normalize()  # collapse to midnight date before concat
+                raw.index.name = "datetime"
+                series.append(raw["Close"].rename(f"{name}_close"))
+                logger.info(f"  {ticker:15s} : {len(raw)} rows")
+            except Exception as exc:
+                logger.warning(f"  {ticker}: fetch failed — {exc}")
+
+        if not series:
+            raise RuntimeError(
+                "ExternalDataFetcher: all ticker downloads failed. "
+                "Check your internet connection or yfinance version."
+            )
+
+        result = pd.concat(series, axis=1)
+        # yfinance can return duplicate dates across tickers after tz conversion;
+        # deduplicate here so the cached parquet is always clean.
+        result = result[~result.index.duplicated(keep="last")]
+        result.to_parquet(cache_path)
+        logger.info(f"Saved external data ({len(result)} rows) to {cache_path}")
+        return result

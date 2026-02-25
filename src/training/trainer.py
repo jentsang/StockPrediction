@@ -1,5 +1,11 @@
 """
 Training loop with early stopping, LR scheduling, and checkpoint saving.
+
+CUDA optimisations (enabled automatically when a GPU is present):
+  - cudnn.benchmark   : lets cuDNN auto-tune kernels for the fixed input shape
+  - pin_memory        : page-locks CPU tensors so transfers overlap with compute
+  - non_blocking      : asynchronous host->device copies
+  - AMP (float16)     : forward pass in half precision (~2x throughput on modern GPUs)
 """
 
 from __future__ import annotations
@@ -10,6 +16,7 @@ from pathlib import Path
 import numpy as np
 import torch
 import torch.nn as nn
+from torch.amp import GradScaler, autocast
 from torch.utils.data import DataLoader, TensorDataset
 
 from src.utils.logger import get_logger
@@ -26,6 +33,23 @@ class Trainer:
         self.device = self._resolve_device(config["training"]["device"])
         self.model.to(self.device)
         CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
+
+        self.is_cuda = self.device.type == "cuda"
+
+        # cuDNN auto-tuner: finds fastest convolution algorithm for fixed input shape
+        if self.is_cuda:
+            torch.backends.cudnn.benchmark = True
+
+        # AMP: float16 forward pass — only meaningful on CUDA
+        use_amp_cfg = self.cfg.get("mixed_precision", True)
+        self.use_amp = self.is_cuda and use_amp_cfg
+        self.scaler = GradScaler(device=self.device.type, enabled=self.use_amp)
+
+        logger.info(
+            f"Device: {self.device} | "
+            f"AMP: {'enabled' if self.use_amp else 'disabled'} | "
+            f"cudnn.benchmark: {torch.backends.cudnn.benchmark if self.is_cuda else 'N/A'}"
+        )
 
         self.optimizer = torch.optim.Adam(
             model.parameters(),
@@ -55,10 +79,15 @@ class Trainer:
         for epoch in range(1, self.cfg["epochs"] + 1):
             train_loss = self._run_epoch(train_loader, train=True)
             val_loss = self._run_epoch(val_loader, train=False)
-            self.scheduler.step(val_loss)
 
             history["train_loss"].append(train_loss)
             history["val_loss"].append(val_loss)
+
+            # ReduceLROnPlateau requires the metric; other schedulers just step()
+            if isinstance(self.scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
+                self.scheduler.step(val_loss)
+            else:
+                self.scheduler.step()
 
             logger.info(
                 f"Epoch {epoch:>4}/{self.cfg['epochs']} | "
@@ -90,15 +119,22 @@ class Trainer:
         total_loss = 0.0
         with torch.set_grad_enabled(train):
             for X_batch, y_batch in loader:
-                X_batch = X_batch.to(self.device)
-                y_batch = y_batch.to(self.device).unsqueeze(1)
-                preds = self.model(X_batch)
-                loss = self.criterion(preds, y_batch)
+                # non_blocking overlaps CPU->GPU transfer with prior GPU work
+                X_batch = X_batch.to(self.device, non_blocking=True)
+                y_batch = y_batch.to(self.device, non_blocking=True).unsqueeze(1)
+
+                with autocast(device_type=self.device.type, enabled=self.use_amp):
+                    preds = self.model(X_batch)
+                    loss = self.criterion(preds, y_batch)
+
                 if train:
                     self.optimizer.zero_grad()
-                    loss.backward()
+                    self.scaler.scale(loss).backward()
+                    self.scaler.unscale_(self.optimizer)
                     nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
-                    self.optimizer.step()
+                    self.scaler.step(self.optimizer)
+                    self.scaler.update()
+
                 total_loss += loss.item() * len(X_batch)
         return total_loss / len(loader.dataset)
 
@@ -110,7 +146,11 @@ class Trainer:
             torch.tensor(y, dtype=torch.float32),
         )
         return DataLoader(
-            dataset, batch_size=self.cfg["batch_size"], shuffle=shuffle
+            dataset,
+            batch_size=self.cfg["batch_size"],
+            shuffle=shuffle,
+            pin_memory=self.is_cuda,   # page-lock CPU memory for faster transfers
+            num_workers=0,             # keep 0 on Windows (avoids multiprocessing issues)
         )
 
     def _save_checkpoint(self, symbol: str) -> None:
@@ -124,7 +164,7 @@ class Trainer:
                 self.optimizer, T_max=self.cfg["epochs"]
             )
         return torch.optim.lr_scheduler.ReduceLROnPlateau(
-            self.optimizer, patience=5, factor=0.5, verbose=True
+            self.optimizer, patience=5, factor=0.5
         )
 
     @staticmethod

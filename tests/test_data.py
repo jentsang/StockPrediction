@@ -21,15 +21,17 @@ MOCK_CONFIG = {
         "test_split": 0.15,
     },
     "features": {
-        "rsi_period": 14,
-        "macd_fast": 12,
-        "macd_slow": 26,
-        "macd_signal": 9,
-        "bb_period": 20,
-        "bb_std": 2,
-        "sma_periods": [10, 20, 50],
-        "ema_periods": [9, 21],
         "normalize": True,
+        "technical_indicators": {
+            "rsi_period": 14,
+            "macd_fast": 12,
+            "macd_slow": 26,
+            "macd_signal": 9,
+            "bb_period": 20,
+            "bb_std": 2,
+            "sma_periods": [10, 20, 50],
+            "ema_periods": [9, 21],
+        },
     },
 }
 
