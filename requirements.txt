@@ -1,0 +1,38 @@
+# ── Core ──────────────────────────────────────────────────────────────────────
+python-dotenv>=1.0.0          # Load .env variables
+
+# ── Data Processing ───────────────────────────────────────────────────────────
+polars>=0.20.0                # Fast DataFrame library (replaces pandas for performance)
+pandas>=2.1.0                 # Still needed by some ML/finance libs
+numpy>=1.26.0
+scipy>=1.12.0
+
+# ── Market Data ───────────────────────────────────────────────────────────────
+alpaca-py>=0.20.0             # Alpaca Markets SDK (data + trading)
+yfinance>=0.2.36              # Yahoo Finance fallback for daily data
+requests>=2.31.0
+
+# ── Machine Learning ──────────────────────────────────────────────────────────
+torch>=2.2.0                  # PyTorch - LSTM / Transformer models
+scikit-learn>=1.4.0           # Preprocessing, metrics, baseline models
+xgboost>=2.0.0                # Gradient boosting baseline
+
+# ── Backtesting ───────────────────────────────────────────────────────────────
+vectorbt>=0.26.0              # Vectorized backtesting (fast, pandas-based)
+
+# ── Feature Engineering ───────────────────────────────────────────────────────
+ta>=0.11.0                    # Technical analysis indicators (RSI, MACD, BB, etc.)
+
+# ── Visualization ─────────────────────────────────────────────────────────────
+plotly>=5.18.0
+matplotlib>=3.8.0
+
+# ── Notebooks ─────────────────────────────────────────────────────────────────
+jupyter>=1.0.0
+ipykernel>=6.29.0
+
+# ── Config ────────────────────────────────────────────────────────────────────
+pyyaml>=6.0.1
+
+# ── Testing ───────────────────────────────────────────────────────────────────
+pytest>=8.0.0

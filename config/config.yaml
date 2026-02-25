@@ -1,0 +1,76 @@
+# ──────────────────────────────────────────────────────────────
+# Stock Prediction Model - Central Configuration
+# ──────────────────────────────────────────────────────────────
+
+# Symbols to trade / train on
+symbols:
+  - AAPL
+  - MSFT
+  - NVDA
+  - SPY
+  - TSLA
+
+# ── Data Settings ─────────────────────────────────────────────
+data:
+  source: alpaca                  # alpaca | yfinance | polygon
+  timeframe: 1Min                 # 1Min | 5Min | 15Min | 1Hour | 1Day
+  start_date: "2020-01-01"
+  end_date: "2024-12-31"
+  train_split: 0.70               # 70% train
+  val_split: 0.15                 # 15% validation
+  test_split: 0.15                # 15% test (walk-forward)
+  sequence_length: 60             # Number of past time steps fed into model (lookback window)
+
+# ── Feature Engineering ───────────────────────────────────────
+features:
+  price_cols:                     # Raw OHLCV features
+    - open
+    - high
+    - low
+    - close
+    - volume
+  technical_indicators:
+    rsi_period: 14
+    macd_fast: 12
+    macd_slow: 26
+    macd_signal: 9
+    bb_period: 20
+    bb_std: 2
+    sma_periods: [10, 20, 50]
+    ema_periods: [9, 21]
+  normalize: true                 # Min-max normalize all features before training
+
+# ── LSTM Model Architecture ───────────────────────────────────
+model:
+  type: lstm                      # lstm | transformer | hybrid
+  input_size: 18                  # Must match number of features produced after engineering
+  hidden_size: 128
+  num_layers: 2
+  dropout: 0.2
+  output_size: 1                  # Predicting next-close price (regression)
+  bidirectional: false
+
+# ── Training ──────────────────────────────────────────────────
+training:
+  epochs: 100
+  batch_size: 64
+  learning_rate: 0.001
+  weight_decay: 0.0001            # L2 regularization
+  early_stopping_patience: 15    # Stop if val loss doesn't improve for N epochs
+  lr_scheduler: cosine            # cosine | step | plateau
+  device: auto                    # auto | cpu | cuda
+
+# ── Backtesting ───────────────────────────────────────────────
+backtesting:
+  initial_capital: 10000.0
+  commission: 0.001               # 0.1% per trade (conservative estimate)
+  slippage: 0.0005                # 0.05% slippage per trade
+  position_size: 0.10             # Risk 10% of capital per trade
+  stop_loss: 0.02                 # 2% stop loss
+  take_profit: 0.04               # 4% take profit (2:1 reward/risk ratio)
+
+# ── Logging / Output ──────────────────────────────────────────
+output:
+  model_dir: models/checkpoints
+  results_dir: data/processed/results
+  log_level: INFO
