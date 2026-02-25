@@ -12,14 +12,14 @@ symbols:
 
 # ── Data Settings ─────────────────────────────────────────────
 data:
-  source: alpaca                  # alpaca | yfinance | polygon
-  timeframe: 1Day                 # 1Min | 5Min | 15Min | 1Hour | 1Day
-  start_date: "2020-01-01"
-  end_date: "2024-12-31"
+  source: yfinance                # alpaca | yfinance | polygon
+  timeframe: 1Hour                # 1Min | 5Min | 15Min | 1Hour | 1Day
+  start_date: "2024-02-27"        # yFinance 1h limit: last ~730 calendar days
+  end_date: "2026-02-24"          # Use yesterday — today's bars may be incomplete
   train_split: 0.70               # 70% train
   val_split: 0.15                 # 15% validation
   test_split: 0.15                # 15% test (walk-forward)
-  sequence_length: 60             # Number of past time steps fed into model (lookback window)
+  sequence_length: 70             # 2-week lookback at 1h bars (7 bars/day x 10 days)
 
 # ── Feature Engineering ───────────────────────────────────────
 features:
@@ -38,12 +38,29 @@ features:
     bb_std: 2
     sma_periods: [10, 20, 50]
     ema_periods: [9, 21]
+  advanced_indicators:            # New volatility / momentum / trend-strength indicators
+    atr_period: 14                # Average True Range period
+    stoch_period: 14              # Stochastic Oscillator %K period
+    stoch_smooth: 3               # Stochastic %D smoothing period
+    williams_period: 14           # Williams %R lookback period
+    adx_period: 14                # ADX trend-strength period
   normalize: true                 # Min-max normalize all features before training
 
-# ── LSTM Model Architecture ───────────────────────────────────
+# ── External Market Data ───────────────────────────────────────
+external_data:
+  enabled: true                   # Set false to train on technical indicators only
+  tickers:                        # yfinance symbols fetched once and cached
+    vix:       "^VIX"             # CBOE Volatility Index
+    yield_10y: "^TNX"             # US 10-year Treasury yield
+    yield_3m:  "^IRX"             # US 13-week T-bill (short-rate proxy)
+    dxy:       "DX-Y.NYB"         # US Dollar Index
+    spy:       "SPY"              # Broad market benchmark
+    xlk:       "XLK"              # Technology sector ETF
+
+# ── Model Architecture ────────────────────────────────────────
 model:
-  type: lstm                      # lstm | transformer | hybrid
-  input_size: 18                  # Must match number of features produced after engineering
+  type: gru                       # lstm | gru  (switch freely — same hyperparams work for both)
+  input_size: 32                  # 18 base + 6 advanced indicators + 8 external features
   hidden_size: 128
   num_layers: 2
   dropout: 0.2
@@ -59,15 +76,15 @@ training:
   early_stopping_patience: 15    # Stop if val loss doesn't improve for N epochs
   lr_scheduler: cosine            # cosine | step | plateau
   device: auto                    # auto | cpu | cuda
+  mixed_precision: true           # Use float16 AMP on CUDA (~2x speedup, no accuracy loss)
 
 # ── Backtesting ───────────────────────────────────────────────
 backtesting:
   initial_capital: 10000.0
   commission: 0.001               # 0.1% per trade (conservative estimate)
   slippage: 0.0005                # 0.05% slippage per trade
-  position_size: 0.10             # Risk 10% of capital per trade
-  stop_loss: 0.02                 # 2% stop loss
-  take_profit: 0.04               # 4% take profit (2:1 reward/risk ratio)
+  risk: 10                        # % of capital used per trade (1–100)
+                                  #   position_size = risk / 100  (e.g. 10 → 10%, 100 → 100%)
 
 # ── Logging / Output ──────────────────────────────────────────
 output:
