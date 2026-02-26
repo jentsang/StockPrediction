@@ -1,17 +1,20 @@
 """
-LSTM model for stock price prediction.
+LSTM model for stock direction classification (or price regression).
 
 Architecture diagram: lstm_architecture.png (same directory)
 
 Forward pass:
-  Input  (batch, seq_len=60, features=18)
+  Input  (batch, seq_len, features)
     -> LSTM Layer 1  [hidden_state (h) + cell_state (c)]
     -> Dropout (p=0.2)
     -> LSTM Layer 2  [hidden_state (h) + cell_state (c)]
     -> Last time step [:, -1, :]
     -> Dropout (p=0.2)
-    -> Linear (128 -> 1)
-  Output (batch, 1)  — predicted next close price (normalized)
+    -> Linear (hidden -> 1)
+  Output (batch, 1)  — raw logit (classification) or predicted price (regression)
+
+  For classification: BCEWithLogitsLoss applies sigmoid internally during training.
+  For inference: pass logit through sigmoid to get P(up), or use Evaluator.predict_proba().
 
 Key properties:
   - 3 gates: input, forget, output

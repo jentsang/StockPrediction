@@ -113,6 +113,42 @@ class DataProcessor:
         )
         return X_train, y_train, X_val, y_val, X_test, y_test
 
+    def build_sequences_classification(
+        self, df: pd.DataFrame
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Return (X, y) for binary up/down direction classification.
+
+        X[i]  : scaled feature window [i : i + seq_len]
+        y[i]  : 1.0 if close[i + seq_len] > close[i + seq_len - 1] else 0.0
+
+        Scaler is fit on training rows only (same no-lookahead strategy as
+        build_sequences), then applied to the full dataset.
+        """
+        data = df.values
+        close_idx = list(df.columns).index("close")
+
+        if self.feat_cfg.get("normalize", True):
+            n_seq = len(data) - self.seq_len
+            train_seq_end = int(n_seq * self.cfg["data"]["train_split"])
+            train_row_end = train_seq_end + self.seq_len
+            self.scaler.fit(data[:train_row_end])
+            scaled = self.scaler.transform(data)
+        else:
+            scaled = data
+
+        X, y = [], []
+        for i in range(self.seq_len, len(scaled)):
+            X.append(scaled[i - self.seq_len : i])
+            y.append(1.0 if scaled[i, close_idx] > scaled[i - 1, close_idx] else 0.0)
+
+        labels = np.array(y, dtype=np.float32)
+        up_pct = labels.mean() * 100
+        logger.info(
+            f"Classification targets: {len(labels)} bars | "
+            f"up={up_pct:.1f}%  down={100 - up_pct:.1f}%"
+        )
+        return np.array(X, dtype=np.float32), labels
+
     def inverse_transform_close(self, values: np.ndarray, df_columns: list) -> np.ndarray:
         """Undo normalization on the close price column only."""
         dummy = np.zeros((len(values), len(df_columns)))

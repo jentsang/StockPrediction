@@ -56,7 +56,11 @@ class Trainer:
             lr=self.cfg["learning_rate"],
             weight_decay=self.cfg["weight_decay"],
         )
-        self.criterion = nn.MSELoss()
+        task = config.get("model", {}).get("task", "regression")
+        self.criterion = (
+            nn.BCEWithLogitsLoss() if task == "classification" else nn.MSELoss()
+        )
+        logger.info(f"Task: {task} | Loss: {self.criterion.__class__.__name__}")
         self.scheduler = self._build_scheduler()
 
     # ── Public ────────────────────────────────────────────────────────────────
@@ -69,6 +73,19 @@ class Trainer:
         y_val: np.ndarray,
         symbol: str = "model",
     ) -> dict:
+        # For classification: rebalance BCE loss using the actual training class ratio
+        if isinstance(self.criterion, nn.BCEWithLogitsLoss):
+            n_pos = float(y_train.sum())
+            n_neg = float(len(y_train) - n_pos)
+            if n_pos > 0 and n_neg > 0:
+                pos_weight = torch.tensor([n_neg / n_pos], device=self.device)
+                self.criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
+                logger.info(
+                    f"Class balance — up: {n_pos:.0f} ({n_pos / len(y_train):.1%})  "
+                    f"down: {n_neg:.0f} ({n_neg / len(y_train):.1%})  "
+                    f"pos_weight: {pos_weight.item():.4f}"
+                )
+
         train_loader = self._make_loader(X_train, y_train, shuffle=True)
         val_loader = self._make_loader(X_val, y_val, shuffle=False)
 

@@ -1,24 +1,26 @@
 """
-GRU model for stock price prediction.
+GRU model for stock direction classification (or price regression).
 
 Architecture diagram: gru_architecture.png (same directory)
 
 Forward pass:
-  Input  (batch, seq_len=60, features=18)
+  Input  (batch, seq_len, features)
     -> GRU Layer 1  [reset gate (r) + update gate (z)]
     -> Dropout (p=0.2)
     -> GRU Layer 2  [reset gate (r) + update gate (z)]
     -> Last time step [:, -1, :]
     -> Dropout (p=0.2)
-    -> Linear (128 -> 1)
-  Output (batch, 1)  — predicted next close price (normalized)
+    -> Linear (hidden -> 1)
+  Output (batch, 1)  — raw logit (classification) or predicted price (regression)
+
+  For classification: BCEWithLogitsLoss applies sigmoid internally during training.
+  For inference: pass logit through sigmoid to get P(up), or use Evaluator.predict_proba().
 
 Key properties:
   - 2 gates: reset (r), update (z)   — no separate cell state
   - ~25% fewer parameters than an equivalent LSTM
   - Faster training, lower memory usage
   - Generalises better on smaller datasets (< 5,000 samples)
-  - Accuracy within 1-2% of LSTM on stock benchmarks
 """
 
 import torch

@@ -38,8 +38,10 @@ class Backtester:
         self.commission      = bt["commission"]
         self.slippage        = bt["slippage"]
 
+        # classification | regression — controls how predictions are interpreted
+        self.task = config.get("model", {}).get("task", "regression")
+
         # ── Risk: % of capital per trade ──────────────────────────────────────
-        # risk=10 → 10% of capital per trade, risk=100 → 100% (all-in), etc.
         risk = float(bt.get("risk", 10))
         if not 1 <= risk <= 100:
             raise ValueError(f"backtesting.risk must be between 1 and 100, got {risk}")
@@ -47,13 +49,11 @@ class Backtester:
         self.risk          = risk
         self.position_size = bt.get("position_size", risk / 100.0)
 
-        # Exit / circuit-breaker params are independent of position size.
-        # Override any of these individually in config.yaml if needed.
-        self.stop_loss       = bt.get("stop_loss",       0.015)  # 1.5% hard stop
-        self.take_profit     = bt.get("take_profit",     0.030)  # 3.0% take profit (2:1)
-        self.trailing_stop   = bt.get("trailing_stop",   0.015)  # 1.5% trailing stop
-        self.max_drawdown_halt      = bt.get("max_drawdown_halt",      0.12)  # halt at 12% drawdown
-        self.max_consecutive_losses = bt.get("max_consecutive_losses", 3)     # pause after 3 losses
+        self.stop_loss       = bt.get("stop_loss",       0.015)
+        self.take_profit     = bt.get("take_profit",     0.030)
+        self.trailing_stop   = bt.get("trailing_stop",   0.015)
+        self.max_drawdown_halt      = bt.get("max_drawdown_halt",      0.12)
+        self.max_consecutive_losses = bt.get("max_consecutive_losses", 3)
 
     # ── Public ────────────────────────────────────────────────────────────────
 
@@ -61,17 +61,23 @@ class Backtester:
         self,
         prices: np.ndarray,
         predictions: np.ndarray,
-        threshold: float = 0.002,
+        threshold: float = 0.5,
     ) -> tuple[dict, pd.DataFrame]:
         """
         Args:
-            prices:      Actual close prices (already inverse-transformed).
-            predictions: Model-predicted close prices (inverse-transformed).
-            threshold:   Minimum predicted move to trigger a trade.
+            prices:      Actual close prices in USD.
+            predictions: Regression — predicted close prices.
+                         Classification — raw model logits (sigmoid applied internally).
+            threshold:   Regression: min predicted price move % to trigger a buy.
+                         Classification: min up-probability to trigger a buy (default 0.5).
 
         Returns:
             (summary_dict, equity_curve_df)
         """
+        predictions = np.array(predictions, dtype=np.float64)
+        if self.task == "classification":
+            # convert logits → up-probabilities
+            predictions = 1.0 / (1.0 + np.exp(-predictions))
         capital = self.initial_capital
         position = 0.0          # shares held
         entry_price = 0.0
@@ -138,7 +144,12 @@ class Backtester:
 
             # ── Signal generation ─────────────────────────────────────────
             if position == 0 and not halted_drawdown and not halted_losses:
-                if pred > prev_price * (1 + threshold):
+                if self.task == "classification":
+                    buy_signal = pred >= threshold          # pred is now a probability
+                else:
+                    buy_signal = pred > prev_price * (1 + threshold)
+
+                if buy_signal:
                     buy_price = price * (1 + self.slippage)
                     trade_capital = capital * self.position_size
                     position = (trade_capital * (1 - self.commission)) / buy_price

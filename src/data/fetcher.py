@@ -11,7 +11,8 @@ Usage:
 """
 
 import os
-from datetime import datetime
+import time
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pandas as pd
@@ -55,6 +56,8 @@ class DataFetcher:
             df = self._fetch_alpaca(symbol, start, end)
         elif self.source == "yfinance":
             df = self._fetch_yfinance(symbol, start, end)
+        elif self.source == "massive":
+            df = self._fetch_massive(symbol, start, end)
         else:
             raise ValueError(f"Unknown data source: {self.source}")
 
@@ -109,6 +112,110 @@ class DataFetcher:
         df = df.rename(columns={"timestamp": "datetime"})
         df = df.set_index("datetime")
         return df
+
+    def _fetch_massive(self, symbol: str, start: str, end: str) -> pd.DataFrame:
+        try:
+            from massive import RESTClient
+        except ImportError:
+            raise ImportError("massive not installed. Run: pip install -U massive")
+
+        api_key = os.getenv("MASSIVE_API_KEY")
+        if not api_key:
+            raise EnvironmentError(
+                "MASSIVE_API_KEY must be set in your .env file. "
+                "Get your key at https://massive.com/dashboard"
+            )
+
+        # Map config timeframe -> (multiplier, timespan)
+        tf_map = {
+            "1Min":  (1,  "minute"),
+            "5Min":  (5,  "minute"),
+            "15Min": (15, "minute"),
+            "1Hour": (1,  "hour"),
+            "1Day":  (1,  "day"),
+        }
+        multiplier, timespan = tf_map.get(self.timeframe, (1, "day"))
+
+        client = RESTClient(api_key=api_key)
+        logger.info(
+            f"Fetching {symbol} from Massive.com "
+            f"[{multiplier} {timespan}] {start} -> {end}"
+        )
+
+        # Free tier: 5 API calls/minute. Chunking by month keeps each request
+        # under 50k bars (one API call), with a 13s sleep between calls.
+        chunks = self._month_chunks(start, end)
+        rows = []
+        for i, (chunk_start, chunk_end) in enumerate(chunks):
+            if i > 0:
+                time.sleep(13)  # stay within 5 calls/minute
+
+            attempt, backoff = 0, 30
+            while True:
+                try:
+                    for agg in client.list_aggs(
+                        ticker=symbol,
+                        multiplier=multiplier,
+                        timespan=timespan,
+                        from_=chunk_start,
+                        to=chunk_end,
+                        limit=50000,
+                    ):
+                        rows.append({
+                            "datetime": pd.Timestamp(agg.timestamp, unit="ms", tz="UTC").tz_convert(None),
+                            "open":     agg.open,
+                            "high":     agg.high,
+                            "low":      agg.low,
+                            "close":    agg.close,
+                            "volume":   agg.volume,
+                        })
+                    break
+                except Exception as exc:
+                    msg = str(exc)
+                    if ("429" in msg or "rate limit" in msg.lower() or "too many" in msg.lower()) and attempt < 4:
+                        attempt += 1
+                        wait = backoff * attempt
+                        logger.warning(
+                            f"  Rate limit on chunk {chunk_start} — waiting {wait}s "
+                            f"(attempt {attempt}/4)"
+                        )
+                        time.sleep(wait)
+                    else:
+                        raise
+
+            logger.info(
+                f"  Chunk {i + 1}/{len(chunks)} ({chunk_start} -> {chunk_end}): "
+                f"{len(rows):,} bars total"
+            )
+
+        if not rows:
+            raise RuntimeError(
+                f"Massive.com returned no data for {symbol} "
+                f"({start} -> {end}, {multiplier} {timespan}). "
+                "Check your plan — the free tier provides end-of-day data; "
+                "intraday history requires Starter tier or above."
+            )
+
+        df = pd.DataFrame(rows).set_index("datetime")
+        df.index.name = "datetime"
+        return df
+
+    @staticmethod
+    def _month_chunks(start: str, end: str) -> list[tuple[str, str]]:
+        """Split [start, end] into (month_start, month_end) pairs."""
+        chunks = []
+        cur = datetime.fromisoformat(start)
+        end_dt = datetime.fromisoformat(end)
+        while cur < end_dt:
+            # advance to first day of next month
+            if cur.month == 12:
+                nxt = cur.replace(year=cur.year + 1, month=1, day=1)
+            else:
+                nxt = cur.replace(month=cur.month + 1, day=1)
+            chunk_end = min(nxt - timedelta(days=1), end_dt)
+            chunks.append((cur.strftime("%Y-%m-%d"), chunk_end.strftime("%Y-%m-%d")))
+            cur = nxt
+        return chunks
 
     def _fetch_yfinance(self, symbol: str, start: str, end: str) -> pd.DataFrame:
         try:
